@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<meta charset="utf-8"/>
+<title>Hearing Test with Web Audio API</title>
+<style>
+    :root {
+        font-family: system-ui, sans-serif;
+    }
+    input, button, select, textarea {
+        font: inherit;
+    }
+</style>
+<h1>Hearing Test with Web Audio API</h1>
+<div id='controls'></div>
+<script type="module">
+    (async () => {
+        
+        const shadowMap = new WeakMap;
+
+        class LinearMap extends Map
+        {
+            get(fromValue)
+            {
+                if (super.has(fromValue)) {
+                    return Number(super.get(fromValue));
+                }
+
+                const keys = [... super.keys()].sort();
+                if (keys.length < 1) {
+                    return NaN;
+                }
+                
+                let top = NaN, bottom = NaN;
+                for (const key of keys) {
+                    if (key < fromValue) {
+                        bottom = key;
+                    }
+                    if (key > fromValue) {
+                        top = key;
+                        break;
+                    }
+                }
+
+                if (isNaN(bottom)) {
+                    return top;
+                }
+                if (isNaN(top)) {
+                    return bottom;
+                }
+
+                const bottomValue = super.get(bottom);
+                const topValue = super.get(top);
+                return bottomValue + (topValue - bottomValue) * (fromValue - bottom) / (top - bottom);
+            }
+        }
+
+        const threshoulds = new LinearMap([
+            [20, 0.532],
+            [25, 0.506],
+            [31.5, 0.48],
+            [40, 0.455],
+            [50, 0.432],
+            [63, 0.409],
+            [80, 0.387],
+            [100, 0.367],
+            [125, 0.349],
+            [160, 0.33],
+            [200, 0.315],
+            [250, 0.301],
+            [315, 0.288],
+            [400, 0.276],
+            [500, 0.267],
+            [630, 0.259],
+            [800, 0.253],
+            [1000, 0.25],
+            [1250, 0.246],
+            [1600, 0.244],
+            [2000, 0.243],
+            [3150, 0.243],
+            [4000, 0.242],
+            [5000, 0.242],
+            [6300, 0.245],
+            [8000, 0.254],
+            [10000, 0.271],
+            [12500, 0.301],
+        ]);
+
+        const linearTransfer = new LinearMap([
+            [20, -31.6],
+            [25, -27.2],
+            [31.5, -23],
+            [40, -19.1],
+            [50, -15.9],
+            [63, -13],
+            [80, -10.3],
+            [100, -8.1],
+            [125, -6.2],
+            [160, -4.5],
+            [200, -3.1],
+            [250, -2],
+            [315, -1.1],
+            [400, -0.4],
+            [500, 0],
+            [630, 0.3],
+            [800, 0.5],
+            [1000, 0],
+            [1250, -2.7],
+            [1600, -4.1],
+            [2000, -1],
+            [2500, 1.7],
+            [3150, 2.5],
+            [4000, 1.2],
+            [5000, -2.1],
+            [6300, -7.1],
+            [8000, -11.2],
+            [10000, -10.7],
+            [12500, -3.1],
+        ]);
+
+        const exponents = new LinearMap([
+            [20, 78.5],
+            [25, 68.7],
+            [31.5, 59.5],
+            [40, 51.1],
+            [50, 44],
+            [63, 37.5],
+            [80, 31.5],
+            [100, 26.5],
+            [125, 22.1],
+            [160, 17.9],
+            [200, 14.4],
+            [250, 11.4],
+            [315, 8.6],
+            [400, 6.2],
+            [500, 4.4],
+            [630, 3],
+            [800, 2.2],
+            [1000, 2.4],
+            [1250, 3.5],
+            [1600, 1.7],
+            [2000, -1.3],
+            [2500, -4.2],
+            [3150, -6],
+            [4000, -5.4],
+            [5000, -1.5],
+            [6300, 6],
+            [8000, 12.6],
+            [10000, 13.9],
+            [12500, 12.3],
+        ]);
+
+        const getPressureLevel = (loudness, f) =>
+            10 / threshoulds.get(f)
+                * Math.log10(0.00447 * (10 ** (0.025 * loudness) - 1.15)
+                    + (0.4 * 10 ** ((exponents.get(f) + linearTransfer.get(f)) / 10 - 9)) ** threshoulds.get(f))
+                    - linearTransfer.get(f) + 94;
+
+        class SimpleSwitchElement extends HTMLElement
+        {
+            constructor()
+            {
+                super();
+                const shadow = this.attachShadow({mode: 'closed'});
+                shadowMap.set(this, shadow);
+
+                const off_radio = this.ownerDocument.createElement('input');
+                off_radio.id = 'off';
+                off_radio.type = 'radio';
+                off_radio.autocomplete = 'off';
+                off_radio.name = 'radio';
+                off_radio.checked = true;
+                
+                const on_radio = this.ownerDocument.createElement('input');
+                on_radio.id = 'on';
+                on_radio.type = 'radio';
+                on_radio.autocomplete = 'off';
+                on_radio.name = 'radio';
+                on_radio.checked = false;
+
+                const off_label = this.ownerDocument.createElement('label');
+                off_label.htmlFor = 'off';
+                off_label.append('Off');
+
+                const on_label = this.ownerDocument.createElement('label');
+                on_label.htmlFor = 'on';
+                on_label.append('On');
+
+                const style = this.ownerDocument.createElement('style');
+                style.append(`
+                    * {
+                        font: inherit;
+                    }
+                    
+                    :host {
+                        display: grid;
+                        grid-template-columns: repeat(2, max-content);
+                        grid-template-rows: repeat(2, auto);
+                        grid-auto-flow: row;
+                        text-align: center;
+                        inline-size: max-content;
+                        block-size: max-content;
+                    }
+
+                    label {
+                        margin-block-end: .5em;
+                        margin-inline-start: 1em;
+                        margin-inline-end: 1em;
+                    }
+                `)
+                
+                shadow.append(style, off_radio, on_radio, off_label, on_label);
+            }
+
+            connectedCallback()
+            {
+                if (!this.isConnected) return;
+
+                const shadow = shadowMap.get(this);
+                shadow.querySelector('#on').addEventListener('change', ev => {
+                    this.dispatchEvent(new Event('change'));
+                    if (ev.target.checked) {
+                        this.dispatchEvent(new Event('switchon'));
+                    } else {
+                        this.dispatchEvent(new Event('switchoff'));
+                    }
+                });
+
+                shadow.querySelector('#off').addEventListener('change', ev => {
+                    this.dispatchEvent(new Event('change'));
+                    if (ev.target.checked) {
+                        this.dispatchEvent(new Event('switchoff'));
+                    }
+                });
+            }
+
+            /**
+             * @type {boolean | null}
+             * */
+            get value()
+            {
+                if (!this.isConnected) {
+                    return null;
+                }
+                const shadow = shadowMap.get(this);
+                return !!shadow.querySelector('#on').checked;
+            }
+        }
+
+        customElements.define('simple-switch', SimpleSwitchElement, {});
+
+        class LogSliderElement extends HTMLElement
+        {
+            constructor(aMin, aMax)
+            {
+                super();
+                const shadow = this.attachShadow({mode: 'closed'});
+                shadowMap.set(this, shadow);
+
+                const display = this.ownerDocument.createElement('span');
+                display.id = 'display';
+
+                const min = Math.min(aMin || 1, aMax || 2);
+                const max = Math.max(aMin || 1, aMax || 2);
+                Reflect.defineProperty(this, 'MIN', {value: min});
+                Reflect.defineProperty(this, 'MAX', {value: max});
+                Reflect.defineProperty(this, 'RATE', {value: Math.log(max / min)});
+
+                display.textContent = min.toFixed(0);
+                
+
+                const range = this.ownerDocument.createElement('input');
+                range.id = 'range';
+                range.type = 'range';
+                range.autocomplete = 'off';
+                range.min = 0;
+                range.max = 65535;
+                range.value = 0;
+
+                const style = this.ownerDocument.createElement('style');
+                style.append(`
+                    * {
+                        font: inherit;
+                    }
+
+                    :host {
+                        display: grid;
+                        grid-auto-flow: row;
+                        grid-template-columns: minmax(4em, max-content) 1fr;
+                        grid-column-gap: 1em;
+                    }
+
+                    #range {
+                        inline-size: 100%;
+                    }
+                `);
+
+                shadow.append(style, display, range);
+            }
+
+            connectedCallback()
+            {
+                if (!this.isConnected) return;
+
+                const shadow = shadowMap.get(this);
+                const updateDisplay = range => void (
+                    shadow.querySelector('#display').textContent = 
+                        (this.MIN * Math.exp(range.value / 65535 * this.RATE)).toFixed(0)
+                );
+
+                shadow.querySelector('#range').addEventListener('change', ev => void (
+                    updateDisplay(ev.target)
+                    , this.dispatchEvent(new Event('change'))
+                ));
+
+                updateDisplay(shadow.querySelector('#range'));
+            }
+
+            /** 
+             * @type {number}
+            */
+            get value()
+            {
+                const shadow = shadowMap.get(this);
+                return Number(shadow.querySelector('#display').textContent);
+            }
+        }
+
+        customElements.define('log-slider', LogSliderElement, {});
+
+        
+        /**
+         * @type {(string) => HTMLElement?}
+         */
+        const e = document.querySelector.bind(document);
+
+        /**
+         * @type {AudioContext}
+         */
+        const ctx = new (window.AudioContext || window.webkitAudioContext);
+
+        const oscillatorNode = ctx.createOscillator();
+
+        const levelGainNode = ctx.createGain();
+        const leftMuteGainNode = ctx.createGain();
+        const rightMuteGainNode = ctx.createGain();
+        //const splitter = ctx.createChannelSplitter(2);
+        const merger = ctx.createChannelMerger(2);
+
+        levelGainNode.gain.value = 1;
+        leftMuteGainNode.gain.value = 0;
+        rightMuteGainNode.gain.value = 0;
+
+        oscillatorNode.connect(levelGainNode);
+        levelGainNode.connect(leftMuteGainNode, 0, 0);
+        levelGainNode.connect(rightMuteGainNode, 0, 0);
+        leftMuteGainNode.connect(merger, 0, 0);
+        rightMuteGainNode.connect(merger, 0, 1);
+        merger.connect(ctx.destination);
+
+        const sineWave = ctx.createPeriodicWave(new Float32Array([0, 1]), new Float32Array([0, 0]));
+        oscillatorNode.setPeriodicWave(sineWave);
+
+        oscillatorNode.start();
+
+        const startLeft = () => {
+            //
+            console.log('start left');
+            leftMuteGainNode.gain.setTargetAtTime(1, ctx.currentTime, 0.00781255);
+        };
+
+        const stopLeft = () => {
+            //
+            console.log('stop left');
+            leftMuteGainNode.gain.setTargetAtTime(0, ctx.currentTime, 0.00781255);
+        };
+
+        const startRight = () => {
+            //
+            console.log('start right');
+            rightMuteGainNode.gain.setTargetAtTime(1, ctx.currentTime, 0.00781255);
+        };
+
+        const stopRight = () => {
+            //
+            console.log('stop right');
+            rightMuteGainNode.gain.setTargetAtTime(0, ctx.currentTime, 0.00781255);
+        };
+
+        const controls = e('#controls');
+
+        controls.append('Left:');
+        const leftSwitch = controls.appendChild(new SimpleSwitchElement);
+
+        controls.append('Right:');
+        const rightSwitch = controls.appendChild(new SimpleSwitchElement);
+
+        controls.append('Frequency / Hz:');
+        const freqSlider = controls.appendChild(new LogSliderElement(125, 12500));
+
+        const updateFreq = () => {
+            const freq = freqSlider.value;
+            const gain = Math.pow(10, (getPressureLevel(0, freq) - 40) / 20);
+            console.log('new freq:', freq, gain);
+            
+            levelGainNode.gain.setTargetAtTime(gain, ctx.currentTime, 0.00781255);
+            oscillatorNode.frequency.setTargetAtTime(freq, ctx.currentTime, 0.00781255);
+        };
+
+        leftSwitch.addEventListener('switchon', ev => void (
+            startLeft()
+        ));
+
+        rightSwitch.addEventListener('switchon', ev => void (
+            startRight()
+        ));
+
+        leftSwitch.addEventListener('switchoff', ev => void (
+            stopLeft()
+        ));
+
+        rightSwitch.addEventListener('switchoff', ev => void (
+            stopRight()
+        ));
+
+        oscillatorNode.frequency.value = freqSlider.value;
+        freqSlider.addEventListener('change', ev => 
+            updateFreq()
+        );
+
+        updateFreq();
+        
+    })()
+</script>
